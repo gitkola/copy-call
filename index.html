@@ -456,6 +456,7 @@
           <div class="link-section">
             <input type="text" id="offer-link" class="link-input" readonly />
             <button id="copy-offer" class="btn">Copy Link</button>
+            <button id="share-offer" class="btn">Share Offer Link</button>
           </div>
 
           <div class="code-section">
@@ -464,6 +465,7 @@
               class="code-textarea"
               placeholder="Paste response code..."
             ></textarea>
+            <button id="paste-answer-btn" class="btn">Paste from Clipboard</button>
             <button id="connect-btn" class="btn success">Connect</button>
           </div>
         </div>
@@ -729,6 +731,18 @@
             .getElementById('connect-btn')
             .addEventListener('click', () => {
               this.handleAnswerCode();
+            });
+
+          document
+            .getElementById('share-offer')
+            .addEventListener('click', () => {
+              this.shareOfferLink();
+            });
+
+          document
+            .getElementById('paste-answer-btn')
+            .addEventListener('click', () => {
+              this.pasteFromClipboard();
             });
 
           // Prevent zoom on iOS when focusing textarea
@@ -1172,6 +1186,129 @@
           } catch (error) {
             this.log(`Copy failed: ${error.message}`);
             this.showAlert('Copy failed. Please copy manually.');
+          }
+        }
+
+        async pasteFromClipboard() {
+          try {
+            // Check if clipboard read is supported
+            if (!navigator.clipboard || !navigator.clipboard.readText) {
+              this.showAlert('Clipboard paste not supported in this browser.');
+              return;
+            }
+
+            const text = await navigator.clipboard.readText();
+            const answerInput = document.getElementById('answer-code-input');
+            
+            if (answerInput && text.trim()) {
+              answerInput.value = text.trim();
+              
+              const button = document.getElementById('paste-answer-btn');
+              if (button) {
+                const originalText = button.textContent;
+                button.textContent = '✓ Pasted!';
+                button.disabled = true;
+
+                setTimeout(() => {
+                  button.textContent = originalText;
+                  button.disabled = false;
+                }, 2000);
+              }
+              
+              this.log('Answer code pasted from clipboard');
+            } else if (!text.trim()) {
+              this.showAlert('Clipboard is empty.');
+            }
+          } catch (error) {
+            this.log(`Paste failed: ${error.message}`);
+            
+            // Handle different error types
+            if (error.name === 'NotAllowedError') {
+              this.showAlert('Clipboard access denied. Please allow clipboard permissions or paste manually using Ctrl+V.');
+            } else {
+              this.showAlert('Paste failed. Please paste manually using Ctrl+V.');
+            }
+          }
+        }
+
+        async shareOfferLink() {
+          const offerLink = document.getElementById('offer-link').value;
+          
+          if (!offerLink) {
+            this.showAlert('No offer link to share.');
+            return;
+          }
+
+          try {
+            // Check if Web Share API is supported
+            if (navigator.share) {
+              await navigator.share({
+                title: 'Copy Call - Video Chat',
+                text: 'Join my video call using Copy Call',
+                url: offerLink
+              });
+              
+              const button = document.getElementById('share-offer');
+              if (button) {
+                const originalText = button.textContent;
+                button.textContent = '✓ Shared!';
+                button.disabled = true;
+
+                setTimeout(() => {
+                  button.textContent = originalText;
+                  button.disabled = false;
+                }, 2000);
+              }
+              
+              this.log('Offer link shared using Web Share API');
+            } else {
+              // Fallback to clipboard copy
+              this.log('Web Share API not supported, falling back to clipboard copy');
+              await navigator.clipboard.writeText(offerLink);
+              
+              const button = document.getElementById('share-offer');
+              if (button) {
+                const originalText = button.textContent;
+                button.textContent = '✓ Copied to Clipboard!';
+                button.disabled = true;
+
+                setTimeout(() => {
+                  button.textContent = originalText;
+                  button.disabled = false;
+                }, 2000);
+              }
+              
+              this.log('Offer link copied to clipboard as fallback');
+            }
+          } catch (error) {
+            this.log(`Share failed: ${error.message}`);
+            
+            // Handle different error types
+            if (error.name === 'AbortError') {
+              // User cancelled the share - don't show error
+              this.log('Share cancelled by user');
+            } else {
+              // Try fallback to clipboard copy
+              try {
+                await navigator.clipboard.writeText(offerLink);
+                
+                const button = document.getElementById('share-offer');
+                if (button) {
+                  const originalText = button.textContent;
+                  button.textContent = '✓ Copied to Clipboard!';
+                  button.disabled = true;
+
+                  setTimeout(() => {
+                    button.textContent = originalText;
+                    button.disabled = false;
+                  }, 2000);
+                }
+                
+                this.log('Offer link copied to clipboard as error fallback');
+              } catch (copyError) {
+                this.showAlert('Share failed. Please copy the link manually.');
+              }
+            }
           }
         }
 
