@@ -1,5 +1,9 @@
 # copy-call
 
+## Live demo
+
+[https://gitkola.github.io/copy-call/](https://gitkola.github.io/copy-call/)
+
 ## Description
 
 Copy Call is a serverless, copy-paste WebRTC application for video calls.
