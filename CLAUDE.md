@@ -42,20 +42,25 @@ Copy Call is a serverless, copy-paste WebRTC application for video calls that wo
 
 ### WebRTC Implementation Notes
 - **STUN servers**: Uses Google's public STUN servers for NAT traversal
-- **Media constraints**: Optimized for mobile with 640x480 video resolution
+- **Media constraints**: Optimized for mobile with 640x480 video resolution, with fallback to basic constraints
 - **ICE gathering**: 3-second timeout for connection establishment
-- **Error handling**: Graceful fallbacks for camera/microphone access failures
+- **Error handling**: Comprehensive error handling with specific error types and user-friendly messages
+- **Browser compatibility**: Automatic detection and warnings for unsupported features
+- **HTTPS detection**: Automatic warnings and guidance for HTTP vs HTTPS access
+- **Permission management**: Proactive permission checking and retry mechanisms
+- **Device enumeration**: Automatic detection of available cameras and microphones
 
 ### Compression System
 - **SDP Optimization**: Field aliasing reduces verbose WebRTC session descriptions by 27%
   - Extension URIs: `urn:ietf:params:rtp-hdrext:ssrc-audio-level` → `@1`
-  - ICE patterns: `typ host generation 0` → `h g0`
+  - ICE patterns: `typ host generation 0` → `h g0` (conservative aliases to prevent parsing errors)
   - Codec names: `opus/48000/2` → `op48`
 - **Gzip Compression**: Native browser CompressionStream API provides additional 62% reduction
 - **Total Performance**: 79% size reduction (10k+ chars → ~2.1k chars)
 - **Telegram Compliance**: URLs fit comfortably within 4,096 character limit
 - **Browser Compatibility**: Handles Chrome's verbose SDPs and Safari's compact SDPs equally well
-- **Backward Compatibility**: Automatic detection and fallback for uncompressed formats
+- **Backward Compatibility**: Automatic detection and fallback for uncompressed formats with priority order
+- **Error Recovery**: Robust SDP parsing with detailed error messages and fallback mechanisms
 
 ### UI/UX Considerations
 - **Mobile-first design**: Optimized for touch interfaces and mobile browsers
@@ -63,3 +68,31 @@ Copy Call is a serverless, copy-paste WebRTC application for video calls that wo
 - **Copy-paste UX**: Simple clipboard operations for offer/answer exchange with compressed URLs
 - **Visual feedback**: Status indicators, button state changes, and compression ratio logging
 - **Performance indicators**: Console logs show SDP optimization and compression statistics
+- **Error messaging**: User-friendly error messages with specific instructions for resolution
+- **Debug information**: Comprehensive system information logging for troubleshooting
+- **Retry mechanisms**: Automatic retry buttons for recoverable errors like permission denials
+- **HTTPS warnings**: Prominent warnings and solutions for security-related camera access issues
+
+## Error Handling & Troubleshooting
+
+### Camera/Microphone Access Issues
+The application includes comprehensive error handling for media access failures:
+
+- **NotAllowedError**: Permission denied - provides instructions for enabling browser permissions
+- **NotFoundError**: No devices found - guidance on device connectivity
+- **NotReadableError**: Device busy - instructions to close other applications
+- **OverconstrainedError**: Constraint not supported - fallback to basic constraints
+- **SecurityError**: Security restrictions - HTTPS requirement warnings
+- **Browser compatibility**: Detection of unsupported browsers with recommendations
+
+### SDP Compression Issues
+- Conservative SDP optimization to prevent parsing errors
+- Automatic fallback between compressed and uncompressed formats
+- Detailed error logging for WebRTC connection failures
+- Priority order: uncompressed → compressed → error with detailed diagnostics
+
+### Development Tools
+- Real-time debug panel with system information
+- Device enumeration and permission state logging
+- Compression ratio and performance statistics
+- Test page (`test.html`) for isolating camera access issues
