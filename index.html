@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, viewport-fit=cover, user-scalable=no"
     />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta
@@ -18,6 +18,29 @@
         box-sizing: border-box;
         margin: 0;
         padding: 0;
+        -webkit-touch-callout: none;
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
+      }
+
+      /* Prevent zoom, scroll, and selection on all elements except inputs */
+      html, body {
+        -ms-touch-action: manipulation;
+        touch-action: manipulation;
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+        -webkit-text-size-adjust: 100%;
+        -ms-text-size-adjust: 100%;
+      }
+
+      /* Allow text selection only for inputs and textareas */
+      input, textarea {
+        -webkit-user-select: text;
+        -moz-user-select: text;
+        -ms-user-select: text;
+        user-select: text;
       }
 
       body {
@@ -26,14 +49,18 @@
         color: #fff;
         height: 100vh;
         width: 100vw;
+        position: fixed;
+        top: 0;
+        left: 0;
         overflow: hidden;
         overscroll-behavior: none;
+        -webkit-overflow-scrolling: touch;
         padding: env(safe-area-inset-top) env(safe-area-inset-right)
           env(safe-area-inset-bottom) env(safe-area-inset-left);
       }
 
       .container {
-        min-height: 100vh;
+        height: 100vh;
         max-width: 414px;
         margin: 0 auto;
         display: flex;
@@ -42,6 +69,7 @@
         border-right: 1px solid #333;
         overflow: hidden;
         overscroll-behavior: none;
+        position: relative;
       }
 
       .status {
@@ -68,7 +96,8 @@
         display: flex;
         flex-direction: column;
         padding: 15px;
-        gap: 20px;
+        gap: 15px;
+        overflow: hidden;
       }
 
       .link-section,
@@ -153,14 +182,15 @@
         flex: 1;
         display: flex;
         flex-direction: column;
-        gap: 10px;
-        min-height: 300px;
+        gap: 8px;
+        overflow: hidden;
       }
 
       .video-grid {
         display: grid;
-        gap: 10px;
+        gap: 8px;
         flex: 1;
+        height: 100%;
       }
 
       .video-grid.portrait {
@@ -176,7 +206,8 @@
         border-radius: 12px;
         position: relative;
         overflow: hidden;
-        min-height: 150px;
+        height: 100%;
+        width: 100%;
       }
 
       video {
@@ -307,16 +338,12 @@
       /* Landscape orientation adjustments */
       @media (orientation: landscape) and (max-height: 600px) {
         .content {
-          padding: 10px;
-          gap: 15px;
+          padding: 8px;
+          gap: 10px;
         }
 
-        .video-container {
-          min-height: 200px;
-        }
-
-        .video-box {
-          min-height: 120px;
+        .video-grid {
+          gap: 6px;
         }
       }
 
@@ -339,6 +366,36 @@
       @supports (-webkit-touch-callout: none) {
         .btn {
           -webkit-tap-highlight-color: transparent;
+        }
+        
+        body {
+          -webkit-user-drag: none;
+          -webkit-user-modify: read-write-plaintext-only;
+        }
+        
+        .video-box {
+          -webkit-transform: translateZ(0);
+          transform: translateZ(0);
+          -webkit-backface-visibility: hidden;
+          backface-visibility: hidden;
+        }
+        
+        video {
+          -webkit-transform: translateZ(0);
+          transform: translateZ(0);
+        }
+        
+        /* Enhanced touch feedback */
+        .btn:active,
+        .control-btn:active {
+          -webkit-transform: scale(0.95);
+          transform: scale(0.95);
+          transition: transform 0.1s ease-out;
+        }
+        
+        /* Prevent rubber band scrolling */
+        .container {
+          -webkit-overflow-scrolling: auto;
         }
       }
 
@@ -372,6 +429,7 @@
 
       .fab:active {
         transform: scale(0.9);
+        transition: transform 0.1s ease-out;
       }
 
       @media (max-width: 414px) {
