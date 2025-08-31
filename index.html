@@ -526,7 +526,7 @@
         async init() {
           this.log('Initializing mobile WebRTC...');
 
-          const urlData = this.getUrlData();
+          const urlData = await this.getUrlData();
 
           if (urlData && urlData.type === 'offer') {
             this.mode = 'responder';
@@ -801,7 +801,7 @@
               offer: this.pc.localDescription,
             };
 
-            const link = this.generateLink(linkData);
+            const link = await this.generateLink(linkData);
             document.getElementById('offer-link').value = link;
 
             this.updateStatus('Share the link and wait for response code');
@@ -858,9 +858,9 @@
             // Wait for ICE
             await this.waitForIceGathering();
 
-            // Generate encoded answer
-            const encodedAnswer = btoa(
-              JSON.stringify(this.pc.localDescription)
+            // Generate compressed answer
+            const encodedAnswer = await this.compressData(
+              this.pc.localDescription
             );
             this.currentCode = encodedAnswer;
 
@@ -886,7 +886,7 @@
           this.log('Processing response code...');
 
           try {
-            const answer = JSON.parse(atob(encodedData));
+            const answer = await this.decompressData(encodedData);
             await this.pc.setRemoteDescription(answer);
             this.log('Response code applied successfully');
             this.updateStatus('Connecting...');
@@ -958,18 +958,18 @@
           });
         }
 
-        generateLink(data) {
-          const encoded = btoa(JSON.stringify(data));
+        async generateLink(data) {
+          const encoded = await this.compressData(data);
           const baseUrl = window.location.href.split('#')[0];
           return `${baseUrl}#${encoded}`;
         }
 
-        getUrlData() {
+        async getUrlData() {
           const hash = window.location.hash.substring(1);
           if (!hash) return null;
 
           try {
-            return JSON.parse(atob(hash));
+            return await this.decompressData(hash);
           } catch (error) {
             this.log(`Error parsing URL: ${error.message}`);
             return null;
@@ -1014,6 +1014,273 @@
             this.log(`Copy failed: ${error.message}`);
             this.showAlert('Copy failed. Please copy manually.');
           }
+        }
+
+        async compressData(data) {
+          try {
+            // Optimize SDP before compression if it contains an offer/answer
+            let optimizedData = data;
+            if (data.offer && data.offer.sdp) {
+              optimizedData = {
+                ...data,
+                offer: this.optimizeSdp(data.offer),
+              };
+            } else if (data.sdp) {
+              // Handle direct session description
+              optimizedData = this.optimizeSdp(data);
+            }
+
+            const jsonString = JSON.stringify(optimizedData);
+            const stream = new CompressionStream('gzip');
+            const writer = stream.writable.getWriter();
+            const reader = stream.readable.getReader();
+
+            const encoder = new TextEncoder();
+            const chunks = [];
+
+            writer.write(encoder.encode(jsonString));
+            writer.close();
+
+            let done = false;
+            while (!done) {
+              const { value, done: readerDone } = await reader.read();
+              done = readerDone;
+              if (value) {
+                chunks.push(value);
+              }
+            }
+
+            const compressed = new Uint8Array(
+              chunks.reduce((acc, chunk) => acc + chunk.length, 0)
+            );
+            let offset = 0;
+            for (const chunk of chunks) {
+              compressed.set(chunk, offset);
+              offset += chunk.length;
+            }
+
+            const base64 = btoa(String.fromCharCode(...compressed));
+            this.log(
+              `Compression: ${jsonString.length} → ${
+                base64.length
+              } chars (${Math.round(
+                (1 - base64.length / jsonString.length) * 100
+              )}% reduction)`
+            );
+            return base64;
+          } catch (error) {
+            this.log(
+              `Compression failed: ${error.message}, falling back to uncompressed`
+            );
+            return btoa(JSON.stringify(data));
+          }
+        }
+
+        async decompressData(compressedBase64) {
+          try {
+            const compressed = new Uint8Array(
+              atob(compressedBase64)
+                .split('')
+                .map((c) => c.charCodeAt(0))
+            );
+            const stream = new DecompressionStream('gzip');
+            const writer = stream.writable.getWriter();
+            const reader = stream.readable.getReader();
+
+            const chunks = [];
+
+            writer.write(compressed);
+            writer.close();
+
+            let done = false;
+            while (!done) {
+              const { value, done: readerDone } = await reader.read();
+              done = readerDone;
+              if (value) {
+                chunks.push(value);
+              }
+            }
+
+            const decompressed = new Uint8Array(
+              chunks.reduce((acc, chunk) => acc + chunk.length, 0)
+            );
+            let offset = 0;
+            for (const chunk of chunks) {
+              decompressed.set(chunk, offset);
+              offset += chunk.length;
+            }
+
+            const decoder = new TextDecoder();
+            const jsonString = decoder.decode(decompressed);
+            const data = JSON.parse(jsonString);
+
+            // Restore SDP optimization if present
+            let restoredData = data;
+            if (data.offer && data.offer._v) {
+              restoredData = {
+                ...data,
+                offer: this.restoreSdp(data.offer),
+              };
+            } else if (data._v) {
+              // Handle direct session description
+              restoredData = this.restoreSdp(data);
+            }
+
+            return restoredData;
+          } catch (error) {
+            this.log(
+              `Decompression failed: ${error.message}, trying uncompressed format`
+            );
+            return JSON.parse(atob(compressedBase64));
+          }
+        }
+
+        optimizeSdp(sessionDescription) {
+          const aliases = {
+            // Extension mappings - most verbose
+            'urn:ietf:params:rtp-hdrext:ssrc-audio-level': '@1',
+            'http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time': '@2',
+            'http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01':
+              '@3',
+            'urn:ietf:params:rtp-hdrext:sdes:mid': '@4',
+            'urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id': '@5',
+            'urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id': '@6',
+            'http://www.webrtc.org/experiments/rtp-hdrext/playout-delay': '@7',
+            'http://www.webrtc.org/experiments/rtp-hdrext/video-content-type':
+              '@8',
+            'http://www.webrtc.org/experiments/rtp-hdrext/video-timing': '@9',
+            'http://www.webrtc.org/experiments/rtp-hdrext/color-space': '@10',
+
+            // Common attributes
+            'a=rtcp-mux': '@rtcp-mux',
+            'a=rtcp-rsize': '@rtcp-rsize',
+            'a=extmap-allow-mixed': '@extmap-mixed',
+            'a=setup:actpass': '@setup',
+            'a=mid:': '@mid:',
+            'a=ice-ufrag:': '@ufrag:',
+            'a=ice-pwd:': '@pwd:',
+            'a=ice-options:trickle': '@ice-trickle',
+            'a=fingerprint:sha-256 ': '@fp:',
+            'a=sendrecv': '@sendrecv',
+            'a=msid-semantic: WMS': '@msid-sem',
+
+            // Codec patterns
+            'a=rtpmap:': '@rtp:',
+            'a=fmtp:': '@fmt:',
+            'a=rtcp-fb:': '@fb:',
+
+            // ICE candidate patterns
+            'a=candidate:': '@c:',
+            ' typ host ': ' h ',
+            ' typ srflx ': ' s ',
+            ' typ relay ': ' r ',
+            ' generation 0': ' g0',
+            ' network-id ': ' n',
+            ' network-cost ': ' nc',
+
+            // Common codec names
+            'opus/48000/2': 'op48',
+            'VP8/90000': 'vp8',
+            'VP9/90000': 'vp9',
+            'H264/90000': 'h264',
+            'red/90000': 'red90',
+            'ulpfec/90000': 'fec90',
+            'rtx/90000': 'rtx90',
+          };
+
+          let optimizedSdp = sessionDescription.sdp;
+
+          // Apply aliases
+          for (const [original, alias] of Object.entries(aliases)) {
+            optimizedSdp = optimizedSdp.replaceAll(original, alias);
+          }
+
+          // Create optimized session description
+          const optimized = {
+            type: sessionDescription.type,
+            sdp: optimizedSdp,
+            _v: 1, // Version marker for decompression
+          };
+
+          this.log(
+            `SDP optimization: ${sessionDescription.sdp.length} → ${
+              optimizedSdp.length
+            } chars (${Math.round(
+              (1 - optimizedSdp.length / sessionDescription.sdp.length) * 100
+            )}% reduction)`
+          );
+
+          return optimized;
+        }
+
+        restoreSdp(optimizedDescription) {
+          // Check if this is an optimized version
+          if (!optimizedDescription._v) {
+            return optimizedDescription; // Already unoptimized
+          }
+
+          const reverseAliases = {
+            // Extension mappings
+            '@1': 'urn:ietf:params:rtp-hdrext:ssrc-audio-level',
+            '@2': 'http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time',
+            '@3': 'http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01',
+            '@4': 'urn:ietf:params:rtp-hdrext:sdes:mid',
+            '@5': 'urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id',
+            '@6': 'urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id',
+            '@7': 'http://www.webrtc.org/experiments/rtp-hdrext/playout-delay',
+            '@8': 'http://www.webrtc.org/experiments/rtp-hdrext/video-content-type',
+            '@9': 'http://www.webrtc.org/experiments/rtp-hdrext/video-timing',
+            '@10': 'http://www.webrtc.org/experiments/rtp-hdrext/color-space',
+
+            // Common attributes
+            '@rtcp-mux': 'a=rtcp-mux',
+            '@rtcp-rsize': 'a=rtcp-rsize',
+            '@extmap-mixed': 'a=extmap-allow-mixed',
+            '@setup': 'a=setup:actpass',
+            '@mid:': 'a=mid:',
+            '@ufrag:': 'a=ice-ufrag:',
+            '@pwd:': 'a=ice-pwd:',
+            '@ice-trickle': 'a=ice-options:trickle',
+            '@fp:': 'a=fingerprint:sha-256 ',
+            '@sendrecv': 'a=sendrecv',
+            '@msid-sem': 'a=msid-semantic: WMS',
+
+            // Codec patterns
+            '@rtp:': 'a=rtpmap:',
+            '@fmt:': 'a=fmtp:',
+            '@fb:': 'a=rtcp-fb:',
+
+            // ICE candidate patterns
+            '@c:': 'a=candidate:',
+            ' h ': ' typ host ',
+            ' s ': ' typ srflx ',
+            ' r ': ' typ relay ',
+            ' g0': ' generation 0',
+            ' n': ' network-id ',
+            ' nc': ' network-cost ',
+
+            // Common codec names
+            op48: 'opus/48000/2',
+            vp8: 'VP8/90000',
+            vp9: 'VP9/90000',
+            h264: 'H264/90000',
+            red90: 'red/90000',
+            fec90: 'ulpfec/90000',
+            rtx90: 'rtx/90000',
+          };
+
+          let restoredSdp = optimizedDescription.sdp;
+
+          // Apply reverse aliases
+          for (const [alias, original] of Object.entries(reverseAliases)) {
+            restoredSdp = restoredSdp.replaceAll(alias, original);
+          }
+
+          // Return restored session description without version marker
+          return {
+            type: optimizedDescription.type,
+            sdp: restoredSdp,
+          };
         }
 
         log(message) {
