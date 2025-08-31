@@ -393,11 +393,16 @@
 
   <body>
     <div class="container">
-      <div class="header">
+      <!-- <div class="header">
         <h1>Copy Call</h1>
-      </div>
+      </div> -->
 
       <div id="status" class="status waiting">Initializing...</div>
+
+      <!-- HTTPS Warning -->
+      <div id="https-warning" class="status error hidden">
+        ⚠️ HTTPS Required - Camera access may be blocked over HTTP
+      </div>
 
       <div class="content">
         <!-- Initiator Mode: Generate Offer -->
@@ -499,7 +504,7 @@
           </div>
         </div>
 
-        <div id="debug" class="debug hidden"></div>
+        <div id="debug" class="debug"></div>
       </div>
 
       <!-- Floating Action Button -->
@@ -525,6 +530,23 @@
 
         async init() {
           this.log('Initializing mobile WebRTC...');
+          this.logSystemInfo();
+
+          // Check browser compatibility and permissions
+          const compatibilityResult = await this.checkCompatibility();
+          if (!compatibilityResult.compatible) {
+            this.updateStatus('Browser not supported', 'error');
+            this.showAlert(compatibilityResult.message);
+            return;
+          }
+
+          // Show HTTPS warning if needed
+          if (!this.isHTTPS()) {
+            this.log(
+              'Warning: Running over HTTP - camera access may be restricted'
+            );
+            this.showHTTPSWarning();
+          }
 
           const urlData = await this.getUrlData();
 
@@ -763,18 +785,16 @@
           this.setupPeerConnection();
 
           try {
+            // Check if getUserMedia is available
+            if (
+              !navigator.mediaDevices ||
+              !navigator.mediaDevices.getUserMedia
+            ) {
+              throw new Error('getUserMedia not supported');
+            }
+
             // Get user media with mobile-optimized constraints
-            this.localStream = await navigator.mediaDevices.getUserMedia({
-              video: {
-                width: { ideal: 640 },
-                height: { ideal: 480 },
-                facingMode: 'user',
-              },
-              audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-              },
-            });
+            this.localStream = await this.requestUserMedia();
 
             // Store track references and add tracks
             this.localStream.getTracks().forEach((track) => {
@@ -806,8 +826,7 @@
 
             this.updateStatus('Share the link and wait for response code');
           } catch (error) {
-            this.log(`Error creating offer: ${error.message}`);
-            this.updateStatus('Error accessing camera/microphone', 'error');
+            this.handleMediaError(error, 'creating offer');
           }
         }
 
@@ -819,18 +838,16 @@
           this.setupPeerConnection();
 
           try {
+            // Check if getUserMedia is available
+            if (
+              !navigator.mediaDevices ||
+              !navigator.mediaDevices.getUserMedia
+            ) {
+              throw new Error('getUserMedia not supported');
+            }
+
             // Get user media with mobile constraints
-            this.localStream = await navigator.mediaDevices.getUserMedia({
-              video: {
-                width: { ideal: 640 },
-                height: { ideal: 480 },
-                facingMode: 'user',
-              },
-              audio: {
-                echoCancellation: true,
-                noiseSuppression: true,
-              },
-            });
+            this.localStream = await this.requestUserMedia();
 
             // Display local video
             document.getElementById('responder-local-video').srcObject =
@@ -849,7 +866,13 @@
             });
 
             // Process offer
-            await this.pc.setRemoteDescription(urlData.offer);
+            try {
+              await this.pc.setRemoteDescription(urlData.offer);
+              this.log('Remote offer set successfully');
+            } catch (sdpError) {
+              this.log(`SDP Error: ${sdpError.message}`);
+              throw new Error(`Invalid offer data: ${sdpError.message}`);
+            }
 
             // Create answer
             const answer = await this.pc.createAnswer();
@@ -869,8 +892,7 @@
 
             this.updateStatus('Code generated! Send it back to connect.');
           } catch (error) {
-            this.log(`Error handling offer: ${error.message}`);
-            this.updateStatus('Error accessing camera/microphone', 'error');
+            this.handleMediaError(error, 'handling offer');
           }
         }
 
@@ -887,12 +909,19 @@
 
           try {
             const answer = await this.decompressData(encodedData);
-            await this.pc.setRemoteDescription(answer);
-            this.log('Response code applied successfully');
-            this.updateStatus('Connecting...');
+            try {
+              await this.pc.setRemoteDescription(answer);
+              this.log('Response code applied successfully');
+              this.updateStatus('Connecting...');
 
-            // Show video interface
-            this.showConnectedMode();
+              // Show video interface
+              this.showConnectedMode();
+            } catch (sdpError) {
+              this.log(`SDP Error: ${sdpError.message}`);
+              throw new Error(
+                `Invalid response code format: ${sdpError.message}`
+              );
+            }
           } catch (error) {
             this.log(`Error with response code: ${error.message}`);
             this.showAlert(
@@ -1078,6 +1107,16 @@
 
         async decompressData(compressedBase64) {
           try {
+            // First, try to parse as uncompressed base64 (simpler format)
+            try {
+              const uncompressedData = JSON.parse(atob(compressedBase64));
+              this.log('Using uncompressed format');
+              return uncompressedData;
+            } catch (uncompressedError) {
+              // If that fails, try compressed format
+              this.log('Trying compressed format...');
+            }
+
             const compressed = new Uint8Array(
               atob(compressedBase64)
                 .split('')
@@ -1126,12 +1165,11 @@
               restoredData = this.restoreSdp(data);
             }
 
+            this.log('Using compressed format');
             return restoredData;
           } catch (error) {
-            this.log(
-              `Decompression failed: ${error.message}, trying uncompressed format`
-            );
-            return JSON.parse(atob(compressedBase64));
+            this.log(`Both decompression methods failed: ${error.message}`);
+            throw new Error('Invalid data format');
           }
         }
 
@@ -1175,8 +1213,6 @@
             ' typ srflx ': ' s ',
             ' typ relay ': ' r ',
             ' generation 0': ' g0',
-            ' network-id ': ' n',
-            ' network-cost ': ' nc',
 
             // Common codec names
             'opus/48000/2': 'op48',
@@ -1256,8 +1292,6 @@
             ' s ': ' typ srflx ',
             ' r ': ' typ relay ',
             ' g0': ' generation 0',
-            ' n': ' network-id ',
-            ' nc': ' network-cost ',
 
             // Common codec names
             op48: 'opus/48000/2',
@@ -1283,12 +1317,278 @@
           };
         }
 
+        async requestUserMedia() {
+          // Primary constraints
+          const primaryConstraints = {
+            video: {
+              width: { ideal: 640 },
+              height: { ideal: 480 },
+              facingMode: 'user',
+            },
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+            },
+          };
+
+          // Fallback constraints
+          const fallbackConstraints = {
+            video: true,
+            audio: true,
+          };
+
+          try {
+            this.log('Requesting user media with primary constraints...');
+            return await navigator.mediaDevices.getUserMedia(
+              primaryConstraints
+            );
+          } catch (error) {
+            this.log(
+              `Primary constraints failed: ${error.name}. Trying fallback...`
+            );
+            try {
+              return await navigator.mediaDevices.getUserMedia(
+                fallbackConstraints
+              );
+            } catch (fallbackError) {
+              this.log(
+                `Fallback constraints also failed: ${fallbackError.name}`
+              );
+              throw fallbackError;
+            }
+          }
+        }
+
+        handleMediaError(error, context) {
+          this.log(`Error ${context}: ${error.name} - ${error.message}`);
+
+          let userMessage = 'Camera/microphone access failed';
+          let instructions = '';
+
+          // Handle specific error types
+          switch (error.name) {
+            case 'NotAllowedError':
+              userMessage = 'Camera/microphone permission denied';
+              instructions =
+                'Please allow camera and microphone access in your browser settings and refresh the page.';
+              break;
+
+            case 'NotFoundError':
+              userMessage = 'No camera or microphone found';
+              instructions =
+                'Please ensure a camera and microphone are connected to your device.';
+              break;
+
+            case 'NotReadableError':
+              userMessage = 'Camera/microphone is busy';
+              instructions =
+                'Please close other applications using your camera/microphone and try again.';
+              break;
+
+            case 'OverconstrainedError':
+              userMessage = 'Camera/microphone constraints not supported';
+              instructions =
+                'Your device may not support the required video/audio settings.';
+              break;
+
+            case 'SecurityError':
+              userMessage = 'Security error accessing media';
+              instructions = this.isHTTPS()
+                ? 'Please check your browser permissions for this site.'
+                : 'HTTPS is required for camera access. Please use https:// or localhost.';
+              break;
+
+            case 'getUserMedia not supported':
+              userMessage = 'Browser not supported';
+              instructions =
+                'Please use a modern browser like Chrome, Firefox, Safari, or Edge.';
+              break;
+
+            default:
+              userMessage = 'Media access error';
+              instructions =
+                'Please check your camera/microphone settings and try again.';
+          }
+
+          // Show detailed error in UI
+          this.updateStatus(`${userMessage}`, 'error');
+
+          // Show instructions if available
+          if (instructions) {
+            setTimeout(() => {
+              this.showAlert(`${userMessage}\n\n${instructions}`);
+            }, 500);
+          }
+
+          // For some errors, show retry button
+          if (
+            error.name === 'NotReadableError' ||
+            error.name === 'NotAllowedError'
+          ) {
+            this.showRetryOption(context);
+          }
+        }
+
+        async checkCompatibility() {
+          // Check basic WebRTC support
+          if (!window.RTCPeerConnection) {
+            return {
+              compatible: false,
+              message:
+                'WebRTC is not supported in this browser. Please use Chrome, Firefox, Safari, or Edge.',
+            };
+          }
+
+          // Check MediaDevices API
+          if (!navigator.mediaDevices) {
+            return {
+              compatible: false,
+              message:
+                'Media devices API not supported. Please update your browser.',
+            };
+          }
+
+          // Check getUserMedia support
+          if (!navigator.mediaDevices.getUserMedia) {
+            return {
+              compatible: false,
+              message:
+                'Camera/microphone access not supported in this browser.',
+            };
+          }
+
+          // Check if we can enumerate devices (helpful for debugging)
+          try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const hasVideo = devices.some(
+              (device) => device.kind === 'videoinput'
+            );
+            const hasAudio = devices.some(
+              (device) => device.kind === 'audioinput'
+            );
+
+            this.log(
+              `Detected devices - Video: ${hasVideo}, Audio: ${hasAudio}`
+            );
+
+            if (!hasVideo && !hasAudio) {
+              this.log('Warning: No media devices detected');
+            }
+          } catch (error) {
+            this.log(`Device enumeration failed: ${error.message}`);
+          }
+
+          // Check permissions API if available
+          try {
+            if (navigator.permissions) {
+              const cameraPermission = await navigator.permissions.query({
+                name: 'camera',
+              });
+              const micPermission = await navigator.permissions.query({
+                name: 'microphone',
+              });
+
+              this.log(`Camera permission: ${cameraPermission.state}`);
+              this.log(`Microphone permission: ${micPermission.state}`);
+
+              if (
+                cameraPermission.state === 'denied' ||
+                micPermission.state === 'denied'
+              ) {
+                this.log('Warning: Media permissions previously denied');
+              }
+            }
+          } catch (error) {
+            this.log(`Permission check failed: ${error.message}`);
+          }
+
+          return { compatible: true };
+        }
+
+        showHTTPSWarning() {
+          const httpsWarning = document.getElementById('https-warning');
+          if (httpsWarning) {
+            httpsWarning.classList.remove('hidden');
+
+            // Auto-hide after 10 seconds but keep in console
+            setTimeout(() => {
+              httpsWarning.classList.add('hidden');
+            }, 10000);
+          }
+
+          // Also show in status initially
+          this.updateStatus('HTTPS recommended for camera access', 'error');
+
+          // Show helpful popup
+          setTimeout(() => {
+            this.showAlert(
+              '⚠️ HTTPS Required\n\nFor security reasons, modern browsers require HTTPS to access camera and microphone.\n\nSolutions:\n• Use localhost for development\n• Deploy with HTTPS certificate\n• Use ngrok or similar tunneling service'
+            );
+          }, 2000);
+        }
+
+        showRetryOption(context) {
+          // Add a retry button to the UI
+          const retryBtn = document.createElement('button');
+          retryBtn.className = 'btn';
+          retryBtn.textContent = 'Retry Camera Access';
+          retryBtn.onclick = () => {
+            retryBtn.remove();
+            if (context === 'creating offer') {
+              this.createOffer();
+            } else if (context === 'handling offer') {
+              // For responder, we need to get the URL data again
+              this.getUrlData().then((urlData) => {
+                if (urlData) {
+                  this.handleOffer(urlData);
+                }
+              });
+            }
+          };
+
+          // Insert the retry button after the status
+          const statusEl = document.getElementById('status');
+          if (statusEl && statusEl.parentNode) {
+            statusEl.parentNode.insertBefore(retryBtn, statusEl.nextSibling);
+          }
+        }
+
+        isHTTPS() {
+          return (
+            window.location.protocol === 'https:' ||
+            window.location.hostname === 'localhost' ||
+            window.location.hostname === '127.0.0.1'
+          );
+        }
+
+        logSystemInfo() {
+          this.log('=== System Information ===');
+          this.log(`URL: ${window.location.href}`);
+          this.log(`Protocol: ${window.location.protocol}`);
+          this.log(`User Agent: ${navigator.userAgent}`);
+          this.log(`Screen: ${screen.width}x${screen.height}`);
+          this.log(`Viewport: ${window.innerWidth}x${window.innerHeight}`);
+          this.log(`Touch Support: ${'ontouchstart' in window ? 'Yes' : 'No'}`);
+          this.log(
+            `WebRTC Support: ${window.RTCPeerConnection ? 'Yes' : 'No'}`
+          );
+          this.log(
+            `getUserMedia Support: ${
+              navigator.mediaDevices?.getUserMedia ? 'Yes' : 'No'
+            }`
+          );
+          this.log(`Permissions API: ${navigator.permissions ? 'Yes' : 'No'}`);
+          this.log('==========================');
+        }
+
         log(message) {
           console.log(message);
           const debugEl = document.getElementById('debug');
-          const time = new Date().toLocaleTimeString();
-          debugEl.innerHTML += `[${time}] ${message}<br>`;
-          debugEl.scrollTop = debugEl.scrollHeight;
+          if (debugEl) {
+            const time = new Date().toLocaleTimeString();
+            debugEl.innerHTML += `[${time}] ${message}<br>`;
+            debugEl.scrollTop = debugEl.scrollHeight;
+          }
         }
       }
 

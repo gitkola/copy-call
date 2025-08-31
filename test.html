@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Camera Test</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #000; color: #fff; }
+        #status { padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .error { background: #ff3b30; }
+        .success { background: #34c759; }
+        .warning { background: #ff9500; }
+        button { padding: 10px 20px; margin: 10px 0; font-size: 16px; }
+        video { width: 300px; height: 200px; border: 1px solid #333; }
+        #debug { font-size: 12px; max-height: 200px; overflow-y: scroll; border: 1px solid #333; padding: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Camera/Microphone Test</h1>
+    <div id="status">Ready to test...</div>
+    <button onclick="testCamera()">Test Camera Access</button>
+    <br>
+    <video id="video" autoplay muted playsinline></video>
+    <div id="debug"></div>
+
+    <script>
+        function log(message) {
+            console.log(message);
+            const debugEl = document.getElementById('debug');
+            const time = new Date().toLocaleTimeString();
+            debugEl.innerHTML += `[${time}] ${message}<br>`;
+            debugEl.scrollTop = debugEl.scrollHeight;
+        }
+
+        function updateStatus(message, type = '') {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.className = type;
+        }
+
+        async function testCamera() {
+            log('Testing camera access...');
+            updateStatus('Testing camera access...', 'warning');
+
+            try {
+                // Check basic support
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    throw new Error('getUserMedia not supported');
+                }
+
+                log('getUserMedia is supported');
+
+                // Try to get user media
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { 
+                        width: { ideal: 640 }, 
+                        height: { ideal: 480 },
+                        facingMode: 'user'
+                    },
+                    audio: true
+                });
+
+                log('Camera access granted!');
+                updateStatus('Camera access successful!', 'success');
+
+                // Display video
+                document.getElementById('video').srcObject = stream;
+                log('Video stream started');
+
+            } catch (error) {
+                log(`Error: ${error.name} - ${error.message}`);
+                
+                let message = 'Camera access failed';
+                switch (error.name) {
+                    case 'NotAllowedError':
+                        message = 'Permission denied - check browser permissions';
+                        break;
+                    case 'NotFoundError':
+                        message = 'No camera found';
+                        break;
+                    case 'NotReadableError':
+                        message = 'Camera is busy';
+                        break;
+                    case 'SecurityError':
+                        message = 'Security error - try HTTPS';
+                        break;
+                    default:
+                        message = `Error: ${error.message}`;
+                }
+                
+                updateStatus(message, 'error');
+            }
+        }
+
+        // Log system info on load
+        window.addEventListener('DOMContentLoaded', () => {
+            log('=== System Info ===');
+            log(`Protocol: ${window.location.protocol}`);
+            log(`Host: ${window.location.hostname}`);
+            log(`User Agent: ${navigator.userAgent}`);
+            log(`Screen: ${screen.width}x${screen.height}`);
+            log(`WebRTC: ${window.RTCPeerConnection ? 'Supported' : 'Not supported'}`);
+            log(`getUserMedia: ${navigator.mediaDevices?.getUserMedia ? 'Supported' : 'Not supported'}`);
+            log('==================');
+        });
+    </script>
+</body>
+</html>
